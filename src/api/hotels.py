@@ -1,9 +1,10 @@
 from fastapi import Query, APIRouter, Body
 
-from sqlalchemy import insert, select
+from sqlalchemy import insert, select, func
 
+from repositories.hotels import HotelsRepository
 from src.api.dependencies import PaginationDep
-from src.database import async_session_maker, engine
+from src.database import async_session_maker
 from src.models.hotels import HotelsOrm
 from src.schemas.hotels import Hotel, HotelPATCH
 
@@ -13,27 +14,17 @@ router = APIRouter(prefix="/hotels", tags=["Отели"])
 @router.get("")
 async def get_hotels(
         pagination: PaginationDep,
+        location: str | None = Query(None, description="Локация"),
         title: str | None = Query(None, description="Название отеля"),
-        location: int | None = Query(None, description="Адрес"),
 ):
-    filters = {}
-
-    if title:
-        filters["title"] = title
-    if location:
-        filters["location"] = location
-
-    query = (
-        select(HotelsOrm)
-        .filter_by(**filters)
-        .limit(pagination.per_page)
-        .offset(pagination.page * pagination.per_page)
-    )
-
+    per_page = pagination.per_page or 5
     async with async_session_maker() as session:
-        response = await session.execute(query)
-
-    return response.scalars().all()
+        return await HotelsRepository(session).get_all(
+            location=location,
+            title=title,
+            limit=per_page,
+            offset=per_page * (pagination.page - 1)
+        )
 
 
 @router.post("")
@@ -55,12 +46,10 @@ async def create_hotel(hotel_data: Hotel = Body(openapi_examples={
 })
 ):
     async with async_session_maker() as session:
-        add_hotel_stmt = insert(HotelsOrm).values(**hotel_data.model_dump())
-        print(add_hotel_stmt.compile(engine, compile_kwargs={"literal_binds": True}))
-        await session.execute(add_hotel_stmt)
+        hotel = await HotelsRepository(session).add(**hotel_data.dict())
         await session.commit()
 
-    return {"status": "OK"}
+    return {"status": "OK", "data": hotel}
 
 
 @router.put("/{hotel_id}")
